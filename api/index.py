@@ -8,12 +8,21 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# --- Conexão com o Banco ---
 def get_connection():
+    # Tenta pegar das variáveis de ambiente do sistema (Vercel)
+    user = os.environ.get("DB_USER")
+    password = os.environ.get("DB_PASSWORD")
+    dsn = os.environ.get("DB_DSN")
+
+    # Log de segurança (vai aparecer no seu console da Vercel se falhar)
+    if not user or not password:
+        print("ERRO: Credenciais não encontradas nas variáveis de ambiente!")
+        return None
+
     return oracledb.connect(
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        dsn=os.getenv("DB_DSN")
+        user=user,
+        password=password,
+        dsn=dsn
     )
 
 
