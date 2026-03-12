@@ -9,13 +9,6 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# --- Dados de Teste (Fallback para Apresentação) ---
-# Usamos uma lista global para que o dano persista enquanto o servidor estiver rodando
-herois_simulados = [
-    {"id": 1, "nome": "Galaad (Simulado)", "classe": "Paladino", "hp_atual": 120, "hp_max": 120, "status": "ATIVO"},
-    {"id": 2, "nome": "Morgana (Simulado)", "classe": "Maga", "hp_atual": 70, "hp_max": 70, "status": "ATIVO"}
-]
-
 def get_connection():
     """Tenta conectar ao Oracle usando variáveis de ambiente da Vercel"""
     user = os.environ.get("DB_USER")
@@ -23,16 +16,15 @@ def get_connection():
     dsn = os.environ.get("DB_DSN")
     
     if not user or not pw:
-        print("ERRO: Credenciais ausentes nas variáveis de ambiente.")
         return None
         
     try:
-        # Modo Thin do oracledb com timeout para evitar travamento (Erro 504/500)
+        # Modo Thin do oracledb com timeout curto para evitar travamento na Vercel
         return oracledb.connect(
             user=user, 
             password=pw, 
             dsn=dsn, 
-            expire_time=1  # Tempo de resposta curto para o banco
+            expire_time=1
         )
     except Exception as e:
         print(f"Falha na conexão real com o Oracle: {e}")
@@ -59,26 +51,40 @@ def index():
             .card.caido { border-left-color: var(--danger); opacity: 0.6; filter: grayscale(1); }
             .hp-bg { background: #333; height: 10px; border-radius: 5px; margin: 10px 0; overflow: hidden; }
             .hp-bar { background: linear-gradient(90deg, #ff4b2b, #ff416c); height: 100%; transition: width 0.5s; }
+            .msg-erro { color: var(--danger); text-align: center; grid-column: 1 / -1; }
         </style>
     </head>
-    <body>
+    <body onload="carregar()">
         <header><h1>⚔️ SISTEMA DE BATALHA</h1></header>
         <div class="container">
             <button onclick="processarTurno()" id="btn-turno">AVANÇAR TURNO (DANO DE NÉVOA)</button>
-            <div id="lista-herois"></div>
+            <div id="lista-herois">Buscando dados no banco...</div>
         </div>
         <script>
             async function carregar() {
-                const res = await fetch('/herois');
-                const dados = await res.json();
-                document.getElementById('lista-herois').innerHTML = dados.map(h => `
-                    <div class="card ${h.status === 'CAIDO' ? 'caido' : ''}">
-                        <strong>${h.nome}</strong> (${h.classe})<br>
-                        <div class="hp-bg"><div class="hp-bar" style="width: ${(h.hp_atual/h.hp_max)*100}%"></div></div>
-                        <small>HP: ${h.hp_atual}/${h.hp_max} - ${h.status}</small>
-                    </div>
-                `).join('');
+                try {
+                    const res = await fetch('/herois');
+                    const dados = await res.json();
+                    
+                    const container = document.getElementById('lista-herois');
+                    
+                    if (dados.erro) {
+                        container.innerHTML = `<p class="msg-erro">❌ ${dados.erro}</p>`;
+                        return;
+                    }
+
+                    container.innerHTML = dados.map(h => `
+                        <div class="card ${h.status === 'CAIDO' ? 'caido' : ''}">
+                            <strong>${h.nome}</strong> (${h.classe})<br>
+                            <div class="hp-bg"><div class="hp-bar" style="width: ${(h.hp_atual/h.hp_max)*100}%"></div></div>
+                            <small>HP: ${h.hp_atual}/${h.hp_max} - ${h.status}</small>
+                        </div>
+                    `).join('');
+                } catch (e) {
+                    document.getElementById('lista-herois').innerHTML = '<p class="msg-erro">❌ Erro ao conectar na API</p>';
+                }
             }
+
             async function processarTurno() {
                 const btn = document.getElementById('btn-turno');
                 btn.innerText = "PROCESSANDO..."; btn.disabled = true;
@@ -86,7 +92,6 @@ def index():
                 await carregar();
                 btn.innerText = "AVANÇAR TURNO (DANO DE NÉVOA)"; btn.disabled = false;
             }
-            carregar();
         </script>
     </body></html>
     """
@@ -97,19 +102,19 @@ def index():
 @app.route("/herois", methods=["GET"])
 def api_listar_herois():
     conn = get_connection()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id_heroi, nome, classe, hp_atual, hp_max, status FROM TB_HEROIS")
-            dados = cursor.fetchall()
-            return jsonify([{"id": h[0], "nome": h[1], "classe": h[2], "hp_atual": h[3], "hp_max": h[4], "status": h[5]} for h in dados]), 200
-        except Exception as e:
-            print(f"Erro na query: {e}")
-        finally:
-            conn.close()
+    if not conn:
+        return jsonify({"erro": "O banco de dados não permitiu a conexão (Firewall/IP)."}), 500
 
-    # Fallback: Se o banco da FIAP não responder, envia os simulados
-    return jsonify(herois_simulados), 200
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id_heroi, nome, classe, hp_atual, hp_max, status FROM TB_HEROIS")
+        dados = cursor.fetchall()
+        herois = [{"id": h[0], "nome": h[1], "classe": h[2], "hp_atual": h[3], "hp_max": h[4], "status": h[5]} for h in dados]
+        return jsonify(herois), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+    finally:
+        conn.close()
 
 # --------------------------------
 # API: PRÓXIMO TURNO
@@ -117,30 +122,19 @@ def api_listar_herois():
 @app.route("/proximo-turno", methods=["POST"])
 def api_proximo_turno():
     conn = get_connection()
-    sucesso_banco = False
+    if not conn:
+        return jsonify({"erro": "Falha na conexão com o banco"}), 500
     
-    if conn:
-        try:
-            cursor = conn.cursor()
-            # Tenta atualizar o banco real
-            cursor.execute("UPDATE TB_HEROIS SET hp_atual = hp_atual - 15 WHERE status = 'ATIVO'")
-            cursor.execute("UPDATE TB_HEROIS SET status = 'CAIDO' WHERE hp_atual <= 0")
-            conn.commit()
-            sucesso_banco = True
-        except Exception as e:
-            print(f"Erro no update: {e}")
-        finally:
-            conn.close()
-
-    # Sincroniza os simulados (para garantir que a barra de vida desça na apresentação)
-    for h in herois_simulados:
-        if h["status"] == "ATIVO":
-            h["hp_atual"] = max(0, h["hp_atual"] - 15)
-            if h["hp_atual"] <= 0:
-                h["status"] = "CAIDO"
-
-    status_msg = "Real" if sucesso_banco else "Simulado (Banco Offline)"
-    return jsonify({"status": status_msg}), 200
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE TB_HEROIS SET hp_atual = hp_atual - 15 WHERE status = 'ATIVO'")
+        cursor.execute("UPDATE TB_HEROIS SET status = 'CAIDO' WHERE hp_atual <= 0")
+        conn.commit()
+        return jsonify({"sucesso": True}), 200
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     app.run()
