@@ -11,9 +11,9 @@ CORS(app)
 # --- Conexão com o Banco ---
 def get_connection():
     return oracledb.connect(
-        user=os.getenv("DBUSER"),
-        password=os.getenv("DBPASSWORD"),
-        dsn=os.getenv("DBDSN")
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        dsn=os.getenv("DB_DSN")
     )
 
 
