@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import os
 import oracledb
 from dotenv import load_dotenv
@@ -21,9 +21,16 @@ def get_connection():
 # ROTA TESTE
 # --------------------------------
 @app.route("/")
-def hello():
-    # Isso procura o arquivo dentro da pasta 'static'
-    return app.send_static_file('index.html')
+def index():
+    # Tenta entregar o index.html da pasta static
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route("/<path:path>")
+def static_files(path):
+    # Rota para carregar CSS, JS ou imagens que estejam na static
+    return send_from_directory(app.static_folder, path)
+
+# --- Mantenha suas rotas /herois e /proximo-turno aqui embaixo ---
 
 
 # --------------------------------
