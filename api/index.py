@@ -1,6 +1,6 @@
 import os
 import oracledb
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -9,90 +9,92 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# --- Dados de Teste (Fallback para Apresentação) ---
+# Usamos uma lista global para que o dano persista enquanto o servidor estiver rodando
+herois_simulados = [
+    {"id": 1, "nome": "Galaad (Simulado)", "classe": "Paladino", "hp_atual": 120, "hp_max": 120, "status": "ATIVO"},
+    {"id": 2, "nome": "Morgana (Simulado)", "classe": "Maga", "hp_atual": 70, "hp_max": 70, "status": "ATIVO"}
+]
+
 def get_connection():
-    # Puxa das variáveis de ambiente da Vercel
+    """Tenta conectar ao Oracle usando variáveis de ambiente da Vercel"""
     user = os.environ.get("DB_USER")
-    password = os.environ.get("DB_PASSWORD")
+    pw = os.environ.get("DB_PASSWORD")
     dsn = os.environ.get("DB_DSN")
-
-    if not user or not password:
+    
+    if not user or not pw:
+        print("ERRO: Credenciais ausentes nas variáveis de ambiente.")
         return None
-
+        
     try:
-        # Tenta conectar com um tempo limite curto (para não travar a Vercel)
+        # Modo Thin do oracledb com timeout para evitar travamento (Erro 504/500)
         return oracledb.connect(
-            user=user,
-            password=password,
-            dsn=dsn,
-            threaded=True
+            user=user, 
+            password=pw, 
+            dsn=dsn, 
+            expire_time=1  # Tempo de resposta curto para o banco
         )
     except Exception as e:
-        print(f"Erro de conexão: {e}")
+        print(f"Falha na conexão real com o Oracle: {e}")
         return None
 
 # --------------------------------
-# ROTA PRINCIPAL (Entrega o HTML)
+# ROTA PRINCIPAL (Front-end Embutido)
 # --------------------------------
 @app.route("/")
 def index():
-    # Mantive o seu HTML embutido para garantir que ele carregue 100% na Vercel
     return """
     <!DOCTYPE html>
     <html lang="pt-br">
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Hero Manager Pro</title>
+        <meta charset="UTF-8"><title>Hero Manager Pro</title>
         <style>
-            :root { --bg-color: #121212; --card-bg: #1e1e1e; --primary: #bb86fc; --secondary: #03dac6; --danger: #cf6679; --text: #e1e1e1; }
-            body { background-color: var(--bg-color); color: var(--text); font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-            header { width: 100%; padding: 2rem 0; text-align: center; background: linear-gradient(180deg, #1f1f1f 0%, var(--bg-color) 100%); margin-bottom: 2rem; }
-            h1 { margin: 0; letter-spacing: 2px; color: var(--primary); }
-            .container { width: 90%; max-width: 1000px; }
-            .controls { display: flex; justify-content: center; margin-bottom: 2rem; }
-            button { background-color: var(--secondary); color: #000; border: none; padding: 12px 24px; font-weight: bold; border-radius: 4px; cursor: pointer; text-transform: uppercase; }
-            #lista-herois { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
-            .heroi-card { background-color: var(--card-bg); padding: 20px; border-radius: 12px; border-left: 5px solid var(--primary); }
-            .heroi-card.caido { border-left-color: var(--danger); opacity: 0.7; filter: grayscale(0.8); }
-            .hp-container { background: #333; border-radius: 10px; height: 12px; width: 100%; overflow: hidden; margin: 10px 0; }
-            .hp-bar { height: 100%; background: linear-gradient(90deg, #ff4b2b, #ff416c); transition: width 0.5s; }
+            :root { --bg: #121212; --card: #1e1e1e; --primary: #bb86fc; --sec: #03dac6; --danger: #cf6679; --text: #e1e1e1; }
+            body { background: var(--bg); color: var(--text); font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 0; }
+            header { width: 100%; padding: 20px; text-align: center; background: #1f1f1f; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+            .container { width: 90%; max-width: 800px; margin-top: 30px; }
+            button { background: var(--sec); color: #000; border: none; padding: 15px 30px; font-weight: bold; border-radius: 5px; cursor: pointer; width: 100%; margin-bottom: 30px; }
+            #lista-herois { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; }
+            .card { background: var(--card); padding: 20px; border-radius: 10px; border-left: 5px solid var(--primary); }
+            .card.caido { border-left-color: var(--danger); opacity: 0.6; filter: grayscale(1); }
+            .hp-bg { background: #333; height: 10px; border-radius: 5px; margin: 10px 0; overflow: hidden; }
+            .hp-bar { background: linear-gradient(90deg, #ff4b2b, #ff416c); height: 100%; transition: width 0.5s; }
         </style>
     </head>
     <body>
-        <header><h1>SISTEMA DE BATALHA</h1></header>
+        <header><h1>⚔️ SISTEMA DE BATALHA</h1></header>
         <div class="container">
-            <div class="controls"><button onclick="processarTurno()">⚔️ Avançar Turno</button></div>
+            <button onclick="processarTurno()" id="btn-turno">AVANÇAR TURNO (DANO DE NÉVOA)</button>
             <div id="lista-herois"></div>
         </div>
         <script>
-            async function carregarHerois() {
-                try {
-                    const response = await fetch('/herois');
-                    const herois = await response.json();
-                    const container = document.getElementById('lista-herois');
-                    container.innerHTML = herois.map(h => `
-                        <div class="heroi-card ${h.status === 'CAIDO' ? 'caido' : ''}">
-                            <div class="info"><strong>${h.nome}</strong><br><small>${h.classe}</small></div>
-                            <div class="hp-container"><div class="hp-bar" style="width: ${(h.hp_atual / h.hp_max) * 100}%"></div></div>
-                            <div style="font-size: 0.8rem; text-align: right;">HP: ${h.hp_atual} / ${h.hp_max}</div>
-                        </div>
-                    `).join('');
-                } catch (e) { console.error(e); }
+            async function carregar() {
+                const res = await fetch('/herois');
+                const dados = await res.json();
+                document.getElementById('lista-herois').innerHTML = dados.map(h => `
+                    <div class="card ${h.status === 'CAIDO' ? 'caido' : ''}">
+                        <strong>${h.nome}</strong> (${h.classe})<br>
+                        <div class="hp-bg"><div class="hp-bar" style="width: ${(h.hp_atual/h.hp_max)*100}%"></div></div>
+                        <small>HP: ${h.hp_atual}/${h.hp_max} - ${h.status}</small>
+                    </div>
+                `).join('');
             }
             async function processarTurno() {
+                const btn = document.getElementById('btn-turno');
+                btn.innerText = "PROCESSANDO..."; btn.disabled = true;
                 await fetch('/proximo-turno', { method: 'POST' });
-                carregarHerois();
+                await carregar();
+                btn.innerText = "AVANÇAR TURNO (DANO DE NÉVOA)"; btn.disabled = false;
             }
-            carregarHerois();
+            carregar();
         </script>
-    </body>
-    </html>
+    </body></html>
     """
 
 # --------------------------------
-# LISTAR HERÓIS (Com modo Fallback)
+# API: LISTAR HERÓIS
 # --------------------------------
-@app.route("/herois")
+@app.route("/herois", methods=["GET"])
 def api_listar_herois():
     conn = get_connection()
     if conn:
@@ -101,36 +103,44 @@ def api_listar_herois():
             cursor.execute("SELECT id_heroi, nome, classe, hp_atual, hp_max, status FROM TB_HEROIS")
             dados = cursor.fetchall()
             return jsonify([{"id": h[0], "nome": h[1], "classe": h[2], "hp_atual": h[3], "hp_max": h[4], "status": h[5]} for h in dados]), 200
-        except:
-            pass
+        except Exception as e:
+            print(f"Erro na query: {e}")
         finally:
             conn.close()
 
-    # SE O BANCO DA FIAP BLOQUEAR, ELE MOSTRA ISSO:
-    return jsonify([
-        {"id": 1, "nome": "Herói Online (Simulado)", "classe": "Guerreiro", "hp_atual": 80, "hp_max": 100, "status": "ATIVO"},
-        {"id": 2, "nome": "Erro: Banco FIAP Bloqueado", "classe": "Firewall", "hp_atual": 0, "hp_max": 1, "status": "CAIDO"}
-    ]), 200
+    # Fallback: Se o banco da FIAP não responder, envia os simulados
+    return jsonify(herois_simulados), 200
 
 # --------------------------------
-# PROCESSAR PRÓXIMO TURNO
+# API: PRÓXIMO TURNO
 # --------------------------------
 @app.route("/proximo-turno", methods=["POST"])
 def api_proximo_turno():
     conn = get_connection()
+    sucesso_banco = False
+    
     if conn:
         try:
             cursor = conn.cursor()
+            # Tenta atualizar o banco real
             cursor.execute("UPDATE TB_HEROIS SET hp_atual = hp_atual - 15 WHERE status = 'ATIVO'")
             cursor.execute("UPDATE TB_HEROIS SET status = 'CAIDO' WHERE hp_atual <= 0")
             conn.commit()
-            return jsonify({"sucesso": True}), 200
-        except:
-            pass
+            sucesso_banco = True
+        except Exception as e:
+            print(f"Erro no update: {e}")
         finally:
             conn.close()
-    
-    return jsonify({"sucesso": "Modo Simulado"}), 200
+
+    # Sincroniza os simulados (para garantir que a barra de vida desça na apresentação)
+    for h in herois_simulados:
+        if h["status"] == "ATIVO":
+            h["hp_atual"] = max(0, h["hp_atual"] - 15)
+            if h["hp_atual"] <= 0:
+                h["status"] = "CAIDO"
+
+    status_msg = "Real" if sucesso_banco else "Simulado (Banco Offline)"
+    return jsonify({"status": status_msg}), 200
 
 if __name__ == "__main__":
     app.run()
