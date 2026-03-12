@@ -4,3 +4,4 @@
     { "source": "/(.*)", "destination": "/static/index.html" }
   ]
 }
+
