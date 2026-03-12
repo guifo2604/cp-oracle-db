@@ -1,7 +1,7 @@
+from flask import Flask, request, jsonify, render_template
 import os
 import oracledb
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 # --- Configuração Inicial ---
 load_dotenv()
@@ -22,7 +22,8 @@ def get_connection():
 # --------------------------------
 @app.route("/")
 def hello():
-    return "Servidor funcionando"
+    # Isso procura o arquivo dentro da pasta 'static'
+    return app.send_static_file('index.html')
 
 
 # --------------------------------
